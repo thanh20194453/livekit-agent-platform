@@ -1,0 +1,33 @@
+services:
+  # LiveKit Voice Worker
+  voice-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: voice-worker
+    ports:
+      - "8081:8081"
+    env_file:
+      - .env
+    volumes:
+      - logs-data:/app/logs
+      - app-data:/app/data
+    restart: unless-stopped
+    networks:
+      - voice-network
+    healthcheck:
+      test: ["CMD", "pgrep", "-f", "server-worker.py"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+networks:
+  voice-network:
+    driver: bridge
+    name: voice-network
+
+volumes:
+  logs-data:
+    driver: local
+  app-data:
+    driver: local
