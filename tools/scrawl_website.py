@@ -1,0 +1,377 @@
+import json
+import logging
+from typing import Any,  Dict, List, Optional, Set
+
+logger = logging.getLogger(__name__)
+
+try:
+    from trafilatura import (
+        extract,
+        fetch_url,
+        html2txt,
+    )
+    from trafilatura.meta import reset_caches
+
+    # Import spider functionality
+    try:
+        from trafilatura.spider import focused_crawler
+
+        SPIDER_AVAILABLE = True
+    except ImportError:
+        SPIDER_AVAILABLE = False
+        focused_crawler = None
+        logger.warning("Trafilatura spider module not available. Web crawling functionality will be disabled.")
+
+except ImportError:
+    raise ImportError("`trafilatura` not installed. Please install using `pip install trafilatura`")
+
+
+class TrafilaturaTools:
+    """
+    TrafilaturaTools is a toolkit for web scraping and text extraction.
+
+    Args:
+        output_format (str): Default output format for extractions. Options: 'txt', 'json', 'xml', 'markdown', 'csv', 'html', 'xmltei'.
+        include_comments (bool): Whether to extract comments along with main text by default.
+        include_tables (bool): Whether to include table content by default.
+        include_images (bool): Whether to include image information by default (experimental).
+        include_formatting (bool): Whether to preserve formatting by default.
+        include_links (bool): Whether to preserve links by default (experimental).
+        with_metadata (bool): Whether to include metadata in extractions by default.
+        favor_precision (bool): Whether to prefer precision over recall by default.
+        favor_recall (bool): Whether to prefer recall over precision by default.
+        target_language (Optional[str]): Default target language filter (ISO 639-1 format).
+        deduplicate (bool): Whether to remove duplicate segments by default.
+        max_tree_size (Optional[int]): Maximum tree size for processing.
+        max_crawl_urls (int): Maximum number of URLs to crawl per website.
+        max_known_urls (int): Maximum number of known URLs during crawling.
+    """
+
+    def __init__(
+        self,
+        output_format: str = "txt",
+        include_comments: bool = True,
+        include_tables: bool = True,
+        include_images: bool = False,
+        include_formatting: bool = False,
+        include_links: bool = False,
+        with_metadata: bool = False,
+        favor_precision: bool = False,
+        favor_recall: bool = False,
+        target_language: Optional[str] = None,
+        deduplicate: bool = False,
+        max_tree_size: Optional[int] = None,
+        max_crawl_urls: int = 10,
+        max_known_urls: int = 100000,
+        # Tool enable flags for <6 functions
+        enable_extract_text: bool = True,
+        enable_extract_metadata_only: bool = True,
+        enable_html_to_text: bool = True,
+        enable_extract_batch: bool = True,
+        enable_crawl_website: bool = True,
+        all: bool = False,
+        **kwargs,
+    ):
+        self.output_format = output_format
+        self.include_comments = include_comments
+        self.include_tables = include_tables
+        self.include_images = include_images
+        self.include_formatting = include_formatting
+        self.include_links = include_links
+        self.with_metadata = with_metadata
+        self.favor_precision = favor_precision
+        self.favor_recall = favor_recall
+        self.target_language = target_language
+        self.deduplicate = deduplicate
+        self.max_tree_size = max_tree_size
+        self.max_crawl_urls = max_crawl_urls
+        self.max_known_urls = max_known_urls
+
+        super().__init__( *kwargs)
+
+    def _get_extraction_params(
+        self,
+        output_format: Optional[str] = None,
+        include_comments: Optional[bool] = None,
+        include_tables: Optional[bool] = None,
+        include_images: Optional[bool] = None,
+        include_formatting: Optional[bool] = None,
+        include_links: Optional[bool] = None,
+        with_metadata: Optional[bool] = None,
+        favor_precision: Optional[bool] = None,
+        favor_recall: Optional[bool] = None,
+        target_language: Optional[str] = None,
+        deduplicate: Optional[bool] = None,
+        max_tree_size: Optional[int] = None,
+        url_blacklist: Optional[Set[str]] = None,
+        author_blacklist: Optional[Set[str]] = None,
+    ) -> Dict[str, Any]:
+        """Helper method to build extraction parameters with fallbacks to instance defaults."""
+        return {
+            "output_format": output_format if output_format is not None else self.output_format,
+            "include_comments": include_comments if include_comments is not None else self.include_comments,
+            "include_tables": include_tables if include_tables is not None else self.include_tables,
+            "include_images": include_images if include_images is not None else self.include_images,
+            "include_formatting": include_formatting if include_formatting is not None else self.include_formatting,
+            "include_links": include_links if include_links is not None else self.include_links,
+            "with_metadata": with_metadata if with_metadata is not None else self.with_metadata,
+            "favor_precision": favor_precision if favor_precision is not None else self.favor_precision,
+            "favor_recall": favor_recall if favor_recall is not None else self.favor_recall,
+            "target_language": target_language if target_language is not None else self.target_language,
+            "deduplicate": deduplicate if deduplicate is not None else self.deduplicate,
+            "max_tree_size": max_tree_size if max_tree_size is not None else self.max_tree_size,
+            "url_blacklist": url_blacklist,
+            "author_blacklist": author_blacklist,
+        }
+
+    def extract_text(
+        self,
+        url: str,
+        output_format: Optional[str] = None,
+    ) -> str:
+        """
+        Extract main text content from a web page URL using Trafilatura.
+
+        Args:
+            url (str): The URL to extract content from.
+            output_format (Optional[str]): Output format. Options: 'txt', 'json', 'xml', 'markdown', 'csv', 'html', 'xmltei'.
+
+        Returns:
+            str: Extracted content in the specified format, or error message if extraction fails.
+        """
+        try:
+            # Fetch the webpage content with retry and user-agent
+            from trafilatura.settings import use_config
+            import time
+            config = use_config()
+            config.set("DEFAULT", "USER_AGENT", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
+            config.set("DEFAULT", "TIMEOUT", "10")
+            config.set("DEFAULT", "MAX_REDIRECTS", "5")
+            
+            html_content = None
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    html_content = fetch_url(url, config=config)
+                    if html_content:
+                        break
+                except Exception as fetch_error:
+                    logger.warning(f"Attempt {attempt + 1} failed for {url}: {fetch_error}")
+                    if attempt < max_retries - 1:
+                        time.sleep(2 ** attempt)  # Exponential backoff
+                    else:
+                        raise fetch_error
+            
+            if not html_content:
+                return f"Error: Could not fetch content from URL: {url}"
+
+            # Get extraction parameters
+            params = self._get_extraction_params(output_format=output_format)
+
+            result = extract(html_content, url=url, **params)
+
+            if result is None:
+                return f"Error: Could not extract readable content from URL: {url}"
+
+            # Reset caches
+            reset_caches()
+
+            return result
+
+        except Exception as e:
+            return f"Error extracting text from {url}: {e}"
+
+    def crawl_website(
+        self,
+        homepage_url: str,
+        extract_content: bool = False,
+    ) -> str:
+        """
+        Crawl a website and optionally extract content from discovered pages.
+
+        Args:
+            homepage_url (str): The starting URL (preferably homepage) to crawl from.
+            extract_content (bool): Whether to extract content from discovered URLs.
+
+        Returns:
+            str: JSON containing crawl results and optionally extracted content.
+        """
+
+        if not SPIDER_AVAILABLE or focused_crawler is None:
+            return "Error: Web crawling functionality not available. Trafilatura spider module could not be imported."
+        try:
+            # Use instance configuration
+            max_seen = self.max_crawl_urls
+            max_known = self.max_known_urls
+            lang = self.target_language
+
+            # Perform focused crawling
+            to_visit, known_links = focused_crawler(
+                homepage=homepage_url,
+                max_seen_urls=max_seen,
+                max_known_urls=max_known,
+                lang=lang,
+            )
+
+            crawl_results = {
+                "homepage": homepage_url,
+                "to_visit": list(to_visit) if to_visit else [],
+                "known_links": list(known_links) if known_links else [],
+                "stats": {
+                    "urls_to_visit": len(to_visit) if to_visit else 0,
+                    "known_links_count": len(known_links) if known_links else 0,
+                },
+            }
+
+            # Optionally extract content from discovered URLs
+            if extract_content and known_links:
+                extracted_content = {}
+
+                # Limit extraction to avoid overwhelming responses
+                urls_to_extract = list(known_links)[: min(10, len(known_links))]
+
+                for url in urls_to_extract:
+                    try:
+                        params = self._get_extraction_params()
+
+                        # Fetch with retry and user-agent
+                        from trafilatura.settings import use_config
+                        import time
+                        config = use_config()
+                        config.set("DEFAULT", "USER_AGENT", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
+                        config.set("DEFAULT", "TIMEOUT", "10")
+                        config.set("DEFAULT", "MAX_REDIRECTS", "5")
+                        
+                        html_content = None
+                        max_retries = 3
+                        for attempt in range(max_retries):
+                            try:
+                                html_content = fetch_url(url, config=config)
+                                if html_content:
+                                    break
+                            except Exception as fetch_error:
+                                logger.warning(f"Attempt {attempt + 1} failed for {url}: {fetch_error}")
+                                if attempt < max_retries - 1:
+                                    time.sleep(2 ** attempt)
+                                else:
+                                    raise fetch_error
+                        
+                        if html_content:
+                            content = extract(html_content, url=url, **params)
+                            if content:
+                                extracted_content[url] = content
+                    except Exception as e:
+                        extracted_content[url] = f"Error extracting content: {e}"
+
+                crawl_results["extracted_content"] = extracted_content
+
+            # Reset caches
+            reset_caches()
+
+            return json.dumps(crawl_results, indent=2, default=str)
+
+        except Exception as e:
+            return f"Error crawling website {homepage_url}: {e}"
+
+    def html_to_text(
+        self,
+        html_content: str,
+        clean: bool = True,
+    ) -> str:
+        """
+        Convert HTML content to plain text using Trafilatura's html2txt function.
+
+        Args:
+            html_content (str): The HTML content to convert.
+            clean (bool): Whether to remove potentially undesirable elements.
+
+        Returns:
+            str: Plain text extracted from HTML.
+        """
+        try:
+            logger.debug("Converting HTML to text")
+
+            result = html2txt(html_content)
+
+            # Reset caches
+            reset_caches()
+
+            return result if result else "Error: Could not extract text from HTML content"
+
+        except Exception as e:
+            return f"Error converting HTML to text: {e}"
+
+    def extract_batch(
+        self,
+        urls: List[str],
+    ) -> str:
+        """
+        Extract content from multiple URLs in batch.
+
+        Args:
+            urls (List[str]): List of URLs to extract content from.
+
+        Returns:
+            str: JSON containing batch extraction results.
+        """
+        try:
+            logger.debug(f"Starting batch extraction for {len(urls)} URLs")
+
+            results = {}
+            failed_urls = []
+
+            for url in urls:
+                try:
+                    params = self._get_extraction_params()
+
+                    # Fetch with retry and user-agent
+                    from trafilatura.settings import use_config
+                    import time
+                    config = use_config()
+                    config.set("DEFAULT", "USER_AGENT", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
+                    config.set("DEFAULT", "TIMEOUT", "10")
+                    config.set("DEFAULT", "MAX_REDIRECTS", "5")
+                    
+                    html_content = None
+                    max_retries = 3
+                    for attempt in range(max_retries):
+                        try:
+                            html_content = fetch_url(url, config=config)
+                            if html_content:
+                                break
+                        except Exception as fetch_error:
+                            if attempt < max_retries - 1:
+                                time.sleep(2 ** attempt)
+                            else:
+                                raise fetch_error
+                    if html_content:
+                        content = extract(html_content, url=url, **params)
+                        if content:
+                            results[url] = content
+                        else:
+                            failed_urls.append(url)
+                    else:
+                        failed_urls.append(url)
+
+                except Exception as e:
+                    failed_urls.append(url)
+                    results[url] = f"Error: {e}"
+
+            # Reset caches after batch processing
+            reset_caches()
+
+            batch_results = {
+                "successful_extractions": len(results)
+                - len([k for k, v in results.items() if str(v).startswith("Error:")]),
+                "failed_extractions": len(failed_urls),
+                "total_urls": len(urls),
+                "results": results,
+                "failed_urls": failed_urls,
+            }
+
+            return json.dumps(batch_results, indent=2, default=str)
+
+        except Exception as e:
+            return f"Error in batch extraction: {e}"
+        
+trafilatura_tools = TrafilaturaTools()
