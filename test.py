@@ -4,7 +4,7 @@ import json
 import os
 from typing import Dict, Any, Optional
 import signal
-
+import re, httpx
 from livekit.plugins import openai, noise_cancellation
 from livekit.agents.llm import function_tool
 from livekit.agents import Agent, AgentSession, RunContext, JobContext, RoomInputOptions, RoomOutputOptions, cli, WorkerOptions
@@ -18,7 +18,7 @@ from tools.search_information_from_knowledge_base import search_information_from
 from tools.ddgs import ddgs
 from tools.scrawl_website import trafilatura_tools
 from tools.excel_calculator import ExcelRef, excel_calculator
-
+from tools import nodo_tool
 from livekit.api import LiveKitAPI, ListParticipantsRequest, RoomParticipantIdentity
 
 load_dotenv()
@@ -31,10 +31,11 @@ logger.setLevel(logging.INFO)
 class DynamicVoiceAgent(Agent):
     """Voice agent that dynamically configures based on voice bot data"""
 
-    def __init__(self, instructions: str, knowledge_base_tables: list = [], tool_name: list[str] = []) -> None:
+    def __init__(self, instructions: str, knowledge_base_tables: list = [], tool_name: list[str] = [],bot_config: Dict[str, Any] = {} ) -> None:
         super().__init__(instructions=instructions)
         self.knowledge_base_tables = knowledge_base_tables or []
         self.tool_name = tool_name or []
+        self.bot_config = bot_config or {}
 
     async def on_enter(self):
         """Called when agent enters the session"""
@@ -140,6 +141,74 @@ class DynamicVoiceAgent(Agent):
             logger.error(f"Error in excel_calculator: {e}")
             return f"Error in Excel calculation: {str(e)}"
 
+    @function_tool(description="Lấy thông tin chi tiết về dự án đang tư vấn từ cơ sở dữ liệu (RAG).")
+    async def get_info(self, run_ctx: RunContext, question: str) -> str:
+        """Sử dụng tool này khi khách hàng hỏi về thông tin dự án."""
+        if "get_info" not in self.tool_name:
+             return "Get info tool is not enabled."
+        
+        # Lấy duan_id từ config
+        duan_id = self.bot_config.get("duan_id")
+        return await nodo_tool.get_info(question, duan_id)
+
+    @function_tool(description="Tìm kiếm căn hộ theo tiêu chí: location, property_type, area, direction, purpose, num_rooms, price, num_floors.")
+    async def get_apartment_info(self, run_ctx: RunContext, location: str = "", property_type:str = "", area:str= "", direction:str= "", purpose:str= "", num_rooms:str= "", price:str= "", num_floors:str= "") -> str:
+        """Sử dụng tool này khi khách hàng muốn tìm căn hộ cụ thể."""
+        if "get_apartment_info" not in self.tool_name:
+             return "Get apartment info tool is not enabled."
+
+        duan_id = self.bot_config.get("duan_id")
+        # Gọi hàm từ file nodo_tools
+        return await nodo_tool.get_apartment_info(
+            duan_id=duan_id,
+            location=location,
+            property_type=property_type,
+            area=area,
+            direction=direction,
+            purpose=purpose,
+            num_rooms=num_rooms,
+            price=price,
+            num_floors=num_floors
+        )
+
+    @function_tool(description="Hỏi thông tin về các dự án khác ngoài dự án hiện tại.")
+    async def ask_other_project(self, run_ctx: RunContext, question: str) -> str:
+        """Sử dụng tool này khi khách hàng hỏi về dự án khác."""
+        if "ask_other_project" not in self.tool_name:
+             return "Ask other project tool is not enabled."
+        
+        return await nodo_tool.ask_other_project(question)
+
+
+class VoiceBotSession:
+    def __init__(self, ctx: JobContext):
+        self.ctx = ctx
+        self.session = None
+        self._shutdown_event = asyncio.Event()
+
+    def _build_instructions(self, bot_config: Dict[str, Any]) -> str:
+        # ... (Code giữ nguyên như cũ) ...
+        base_instructions = bot_config.get("voice_bot_instructions", "")
+        bot_name = bot_config.get("voice_bot_name", "AI Assistant")
+        # ... 
+        return f"""...""" # (Copy lại phần build instructions của bạn nếu cần)
+
+    # ... (Các hàm _get_bot_configuration, _verify_realtime_model_access giữ nguyên) ...
+
+    async def _create_agent(self, bot_config: Dict[str, Any]) -> Agent:
+        """Create the voice agent with configuration"""
+        # Cần đảm bảo hàm _build_instructions có sẵn ở trên
+        instructions = self._build_instructions(bot_config) 
+        kb_tables = bot_config.get("knowledge_base_table_names", [])
+        tool_name = bot_config.get("voice_bot_tools", [])
+        
+        agent = DynamicVoiceAgent(
+            instructions=instructions,
+            knowledge_base_tables=kb_tables,
+            tool_name=tool_name,
+            bot_config=bot_config  # <--- Quan trọng: Truyền bot_config vào đây
+        )
+        return agent
 
 class VoiceBotSession:
     def __init__(self, ctx: JobContext):
@@ -341,6 +410,7 @@ Start conversations with: "Xin chào! Tôi là trợ lý AI. Tôi có thể giú
             instructions=instructions,
             knowledge_base_tables=kb_tables,
             tool_name=tool_name,
+            bot_config=bot_config
         )
         
         return agent
