@@ -1,6 +1,6 @@
 import shutil
-from typing import Any, Callable, Dict, List, Literal, Optional, Set
-from pydantic import BaseModel
+from typing import Any, Callable, Dict, List, Literal, Optional, Set, Union
+from pydantic import BaseModel, Field
 import time
 import os
 import asyncio
@@ -12,7 +12,7 @@ from utils.async_cache_file import AsyncStaticExcelCache
 async_cache = AsyncStaticExcelCache(cache_dir="./temps/excel")
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
+logger.setLevel(logging.ERROR)
 
 try:
     from openpyxl import load_workbook
@@ -22,9 +22,14 @@ except ImportError:
 
 
 class ExcelRef(BaseModel):
-    cell_ref: str
-    value_type: Literal["number", "string", "date", "boolean", "percentage"]
-    value: Any
+    """Reference to an Excel cell with its value and type."""
+    cell_ref: str = Field(..., description="Excel cell reference (e.g., 'A1', 'B2')")
+    value_type: Literal["number", "string", "date", "boolean", "percentage"] = Field(
+        ..., description="Type of the value to be set in the cell"
+    )
+    value: str = Field(
+        ..., description="The value to set in the cell as a string. Will be converted based on value_type."
+    )
 
 class ExcelCalculator:
     def __init__(self, **kwargs: Any):
@@ -77,7 +82,7 @@ class ExcelCalculator:
         
         return url, file_name, mime_type
     
-    def _process_value(self, value: Any, value_type: str) -> Any:
+    def _process_value(self, value: str, value_type: str) -> Any:
         """Process value based on its type"""
         try:
             if value_type == "number":

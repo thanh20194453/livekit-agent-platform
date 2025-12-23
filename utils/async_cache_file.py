@@ -10,7 +10,7 @@ import logging
 from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
+logger.setLevel(logging.ERROR)
 
 
 class AsyncStaticExcelCache:
@@ -41,7 +41,6 @@ class AsyncStaticExcelCache:
         if os.path.exists(cache_file):
             file_age = time.time() - os.path.getmtime(cache_file)
             if file_age < self.ttl:
-                print(f"Cache HIT: {cache_file}")
                 return cache_file
         
         # Prevent concurrent downloads of same file

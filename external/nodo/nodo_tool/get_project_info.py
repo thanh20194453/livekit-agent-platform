@@ -1,11 +1,14 @@
 import json
 import logging
-from typing import Optional
 import httpx
+from config.settings import settings
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.ERROR)
 
 
 class GetProjecttInfo:
-    async def get_project_info(question: str,project_id:str) -> str:
+    async def get_project_info(self, question: str, project_id: str) -> str:
         """
         Lấy thông tin liên quan từ cơ sở kiến thức bằng cách gọi API RAG.
         Sử dụng tool này khi khách hàng hỏi những câu hỏi về dự án đang giới thiệu.
@@ -14,10 +17,9 @@ class GetProjecttInfo:
         Tham số:
         question (str): Câu hỏi của khách hàng cần được tìm kiếm trong cơ sở dữ liệu.
         """
-        url = "http://13.251.189.33:8117/ask/category"
+        url = settings.dbnodo.vectordb
         category_filter = {"project_id": project_id}
         category_json_string = json.dumps(category_filter)
-        # Các tham số cần thiết cho API của bạn.
         payload = {
             "question": question,
             "top_k": 5,
