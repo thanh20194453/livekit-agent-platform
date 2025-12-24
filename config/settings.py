@@ -58,6 +58,10 @@ class NodoHistoryDbSettings(BaseSettings):
         default="my-apaertmentdb",
         description="apartmentdb"
     )
+    history: str = Field(
+        default="conversation-history",
+        description="nodo history api"
+    )
     apiloginurl: str = Field(
         default="",
         description=""
